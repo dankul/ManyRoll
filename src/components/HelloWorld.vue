@@ -60,6 +60,7 @@ const difficulty = ref(10);
 const advantage = ref('none'); // 'none', 'adv', 'dis'
 const globalPool = ref([]); // Временный пул для настройки
 const units = ref([]); // Массив юнитов с результатами
+const viewMode = ref<'dice' | 'table'>('dice'); // 'dice', 'table'
 
 const availableDice = [4, 6, 8, 10, 12, 20, 100];
 
@@ -93,74 +94,108 @@ const rollAll = () => {
 </script>
 
 <template>
-  <div class="roller-container">
-    <h1>D&D 5e Mass Roller</h1>
+  <div class="w-full max-w-5xl p-5 text-zinc-200 shadow-lg">
+    <h1 class="mb-4 text-3xl font-semibold tracking-tight text-zinc-100 md:text-4xl">D&D 5e Mass Roller</h1>
 
-    <div class="setup-panel">
-      <div class="field">
-        <label>Количество юнитов:</label>
-        <input type="number" v-model.number="unitCount" min="1">
+    <div class="mb-5 rounded-lg bg-zinc-800 p-5">
+      <div class="mb-4 border-b border-zinc-700 pb-2.5">
+        <label class="mb-1 block text-sm font-medium text-zinc-200">Количество юнитов:</label>
+        <input
+          v-model.number="unitCount"
+          type="number"
+          min="1"
+          class="w-28 rounded-md border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none ring-purple-400 transition focus:ring-2"
+        >
       </div>
 
-      <div class="field">
-        <label>
-          <input type="checkbox" v-model="isCheckRoll"> Бросок проверки (d20)
+      <div class="mb-4 border-b border-zinc-700 pb-2.5">
+        <label class="inline-flex items-center gap-2 text-sm text-zinc-100">
+          <input v-model="isCheckRoll" type="checkbox" class="h-4 w-4 accent-purple-500"> Бросок проверки (d20)
         </label>
       </div>
 
-      <div class="field" v-if="isCheckRoll">
-        <label>Сложность (DC):</label>
-        <input type="number" v-model.number="difficulty">
+      <div v-if="isCheckRoll" class="mb-4 border-b border-zinc-700 pb-2.5">
+        <label class="mb-1 block text-sm font-medium text-zinc-200">Сложность (DC):</label>
+        <input
+          v-model.number="difficulty"
+          type="number"
+          class="w-28 rounded-md border border-zinc-600 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none ring-purple-400 transition focus:ring-2"
+        >
       </div>
 
-      <div class="field">
-        <span>Модификатор:</span>
-        <div class="radio-group">
-          <label><input type="radio" value="none" v-model="advantage"> Нет</label>
-          <label><input type="radio" value="adv" v-model="advantage"> Преимущество</label>
-          <label><input type="radio" value="dis" v-model="advantage"> Помеха</label>
+      <div v-if="isCheckRoll" class="mb-4 border-b border-zinc-700 pb-2.5">
+        <span class="mb-2 block text-sm font-medium text-zinc-200">Модификатор:</span>
+        <div class="mt-1 flex flex-wrap gap-4">
+          <label class="inline-flex items-center gap-1.5 text-sm">
+            <input v-model="advantage" type="radio" value="none" class="h-4 w-4 accent-purple-500"> Нет
+          </label>
+          <label class="inline-flex items-center gap-1.5 text-sm">
+            <input v-model="advantage" type="radio" value="adv" class="h-4 w-4 accent-purple-500"> Преимущество
+          </label>
+          <label class="inline-flex items-center gap-1.5 text-sm">
+            <input v-model="advantage" type="radio" value="dis" class="h-4 w-4 accent-purple-500"> Помеха
+          </label>
         </div>
       </div>
 
-      <div class="field" v-if="!isCheckRoll">
-        <p>Настроить пул костей:</p>
-        <div class="dice-buttons">
-          <button v-for="d in availableDice" :key="d" @click="addDieToPool(d)">
+      <div v-if="!isCheckRoll" class="mb-4 border-b border-zinc-700 pb-2.5">
+        <p class="text-sm font-medium text-zinc-200">Настроить пул костей:</p>
+        <div class="my-2.5 flex flex-wrap gap-2">
+          <button
+            v-for="d in availableDice"
+            :key="d"
+            class="rounded-md bg-blue-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
+            @click="addDieToPool(d)"
+          >
             d{{ d }}
           </button>
-          <button class="btn-clear" @click="clearPool">Очистить ({{ globalPool.length }})</button>
+          <button
+            class="rounded-md bg-zinc-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-500"
+            @click="clearPool"
+          >
+            Очистить ({{ globalPool.length }})
+          </button>
         </div>
-        <div class="pool-preview">
+        <div class="text-sm text-zinc-300">
           Текущий пул: {{ globalPool.map(d => 'd' + d).join(', ') || 'пусто' }}
         </div>
       </div>
 
-      <button class="btn-roll" @click="rollAll">БРОСИТЬ ЗА ВСЕХ</button>
+      <button
+        class="w-full rounded-md bg-rose-500 px-4 py-3 text-base font-bold text-white transition hover:bg-rose-600"
+        @click="rollAll"
+      >
+        БРОСИТЬ ЗА ВСЕХ
+      </button>
     </div>
 
-    <div class="results-grid">
+    <div class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
       <div 
         v-for="(unit, index) in units" 
         :key="index" 
-        class="unit-card"
+        class="rounded-lg border border-zinc-700 bg-zinc-800 p-4"
         :class="{ 
-          'success': isCheckRoll && unit.isSuccess, 
-          'failure': isCheckRoll && unit.isSuccess === false 
+          'border-l-4 border-l-emerald-500': isCheckRoll && unit.isSuccess, 
+          'border-l-4 border-l-rose-500': isCheckRoll && unit.isSuccess === false 
         }"
       >
-        <div class="unit-header">Юнит #{{ index + 1 }}</div>
+        <div class="mb-2 text-sm font-semibold text-zinc-100">Юнит #{{ index + 1 }}</div>
         
-        <div class="dice-results">
-          <div v-for="(res, rIdx) in unit.results" :key="rIdx" class="die-box">
-            <span class="die-val">{{ res.val }}</span>
-            <small v-if="res.sides">d{{ res.sides }}</small>
-            <small v-if="res.details">{{ res.details }}</small>
+        <div>
+          <div
+            v-for="(res, rIdx) in unit.results"
+            :key="rIdx"
+            class="my-1 mr-1 inline-flex min-w-10 flex-col items-center rounded bg-white px-2 py-1 text-zinc-900"
+          >
+            <span class="text-lg font-bold">{{ res.val }}</span>
+            <small v-if="res.sides" class="text-xs text-zinc-700">d{{ res.sides }}</small>
+            <small v-if="res.details" class="text-xs text-zinc-600">{{ res.details }}</small>
           </div>
         </div>
         
-        <div class="unit-footer">
+        <div class="mt-2.5 flex items-center justify-between">
           <strong>Всего: {{ unit.total }}</strong>
-          <span v-if="isCheckRoll" class="status-tag">
+          <span v-if="isCheckRoll" class="rounded bg-white/10 px-1.5 py-0.5 text-xs">
             {{ unit.isSuccess ? 'УСПЕХ' : 'ПРОВАЛ' }}
           </span>
         </div>
@@ -168,107 +203,3 @@ const rollAll = () => {
     </div>
   </div>
 </template>
-
-<style scoped>
-.roller-container {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 20px;
-  font-family: sans-serif;
-  background: #1e1e1e;
-  color: #e0e0e0;
-  border-radius: 12px;
-}
-
-.setup-panel {
-  background: #2d2d2d;
-  padding: 20px;
-  border-radius: 8px;
-  margin-bottom: 20px;
-}
-
-.field {
-  margin-bottom: 15px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #3d3d3d;
-}
-
-.radio-group {
-  display: flex;
-  gap: 15px;
-  margin-top: 5px;
-}
-
-.dice-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 10px 0;
-}
-
-button {
-  padding: 8px 16px;
-  border-radius: 4px;
-  border: none;
-  background: #4a90e2;
-  color: white;
-  cursor: pointer;
-}
-
-button:hover {
-  background: #357abd;
-}
-
-.btn-clear { background: #666; }
-.btn-roll {
-  width: 100%;
-  padding: 15px;
-  font-weight: bold;
-  font-size: 1.1rem;
-  background: #e74c3c;
-}
-
-.results-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 15px;
-}
-
-.unit-card {
-  background: #333;
-  padding: 15px;
-  border-radius: 8px;
-  border: 1px solid #444;
-}
-
-.unit-card.success { border-left: 6px solid #2ecc71; }
-.unit-card.failure { border-left: 6px solid #e74c3c; }
-
-.die-box {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  background: white;
-  color: #222;
-  margin: 4px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  min-width: 40px;
-}
-
-.die-val { font-weight: bold; font-size: 1.2rem; }
-
-.unit-footer {
-  margin-top: 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.status-tag {
-  font-size: 0.8rem;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(255,255,255,0.1);
-}
-</style>
