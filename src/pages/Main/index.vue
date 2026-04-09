@@ -95,8 +95,6 @@ const rollAll = () => {
 
 <template>
   <div class="w-full max-w-5xl p-5 text-zinc-200 shadow-lg mx-auto">
-    <h1 class="mb-4 text-3xl font-semibold tracking-tight text-zinc-100 md:text-4xl">D&D 5e Mass Roller</h1>
-
     <div class="mb-5 rounded-lg bg-zinc-800 p-5">
       <div class="mb-4 border-b border-zinc-700 pb-2.5">
         <label class="mb-1 block text-sm font-medium text-zinc-200">Количество юнитов:</label>
