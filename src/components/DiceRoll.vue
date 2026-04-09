@@ -80,6 +80,10 @@ const createNumberFaceMesh = (value) => {
   const texture = new THREE.CanvasTexture(canvas);
   // Гарантуємо оновлення текстури на GPU.
   texture.needsUpdate = true;
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  if (renderer) texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
   // Матеріал для "наклейки" на грань.
   const faceMaterial = new THREE.MeshBasicMaterial({
     // Карта (текстура) з намальованою цифрою.
@@ -168,37 +172,81 @@ const addFaceLabels = () => {
   nonIndexed.dispose();
 };
 
-// Повертає конкретну мітку так, щоб її цифра читалася "вгору" відносно камери.
+// Довертає цифру в площині грані, щоб вона читалась горизонтально для користувача.
 const orientFaceLabelUpright = (face) => {
-  if (!camera || !dice || !face) return;
+  if (!camera || !dice || !face?.label) return;
 
-  const worldNormal = new THREE.Vector3();
-  const right = new THREE.Vector3();
-  const labelUpWorld = new THREE.Vector3();
-  const cameraUpWorld = new THREE.Vector3();
-
-  // Світова нормаль заданої грані.
-  worldNormal.copy(face.normal).transformDirection(dice.matrixWorld).normalize();
-  // Базовий "правий" вектор в площині грані (через world quaternion мітки).
+  const worldNormal = face.normal.clone().transformDirection(dice.matrixWorld).normalize();
   const labelWorldQuaternion = new THREE.Quaternion();
   face.label.getWorldQuaternion(labelWorldQuaternion);
-  right.set(1, 0, 0).applyQuaternion(labelWorldQuaternion);
-  // Вектор "вгору" для мітки в площині грані.
-  labelUpWorld.copy(worldNormal).cross(right).normalize();
-  // Напрям "вгору" камери, спроєктований у площину грані.
-  cameraUpWorld.copy(camera.up).applyQuaternion(camera.quaternion);
+
+  // Поточний "up" цифри у world-space.
+  const labelUpWorld = new THREE.Vector3(0, 1, 0).applyQuaternion(labelWorldQuaternion);
+  // "Up" камери, спроєктований на площину грані.
+  const cameraUpWorld = camera.up
+    .clone()
+    .applyQuaternion(camera.quaternion)
+    .clone();
   cameraUpWorld.addScaledVector(worldNormal, -cameraUpWorld.dot(worldNormal)).normalize();
+  // Також проєктуємо поточний up цифри в площину грані.
+  labelUpWorld.addScaledVector(worldNormal, -labelUpWorld.dot(worldNormal)).normalize();
 
   if (cameraUpWorld.lengthSq() < 1e-6 || labelUpWorld.lengthSq() < 1e-6) return;
 
-  // Кут і знак повороту в площині грані.
   const cos = THREE.MathUtils.clamp(labelUpWorld.dot(cameraUpWorld), -1, 1);
   const angle = Math.acos(cos);
   const cross = new THREE.Vector3().crossVectors(labelUpWorld, cameraUpWorld);
   const sign = Math.sign(cross.dot(worldNormal)) || 1;
 
-  // Повертаємо мітку навколо нормалі її грані.
-  face.label.rotateOnAxis(face.normal, angle * sign);
+  // Обертаємо тільки мітку в площині грані: навколо її ЛОКАЛЬНОЇ осі Z.
+  face.label.rotateOnAxis(new THREE.Vector3(0, 0, 1), angle * sign);
+};
+
+// Довертає куб навколо нормалі грані, щоб "вершина" трикутника дивилась рівно вгору на екрані.
+const alignFaceTrianglePointUp = (face) => {
+  if (!camera || !dice || !face || !face.vertices) return;
+
+  const worldNormal = face.normal.clone().transformDirection(dice.matrixWorld).normalize();
+  const cameraUpWorld = camera.up.clone().applyQuaternion(camera.quaternion);
+  const targetUpOnFace = cameraUpWorld
+    .clone()
+    .addScaledVector(worldNormal, -cameraUpWorld.dot(worldNormal))
+    .normalize();
+
+  if (targetUpOnFace.lengthSq() < 1e-6) return;
+
+  const centerLocal = face.vertices[0]
+    .clone()
+    .add(face.vertices[1])
+    .add(face.vertices[2])
+    .divideScalar(3);
+  const centerWorld = centerLocal.clone().applyMatrix4(dice.matrixWorld);
+
+  // Беремо вершину, яка вже найближча до "верху" в площині грані,
+  // і докручуємо тільки на мінімальний кут.
+  let bestDir = null;
+  let bestScore = -Infinity;
+  for (const vertex of face.vertices) {
+    const worldVertex = vertex.clone().applyMatrix4(dice.matrixWorld);
+    const dir = worldVertex.sub(centerWorld);
+    dir.addScaledVector(worldNormal, -dir.dot(worldNormal)).normalize();
+    const score = dir.dot(targetUpOnFace);
+    if (score > bestScore) {
+      bestScore = score;
+      bestDir = dir;
+    }
+  }
+
+  if (!bestDir || bestDir.lengthSq() < 1e-6) return;
+
+  const cos = THREE.MathUtils.clamp(bestDir.dot(targetUpOnFace), -1, 1);
+  const angle = Math.acos(cos);
+  const cross = new THREE.Vector3().crossVectors(bestDir, targetUpOnFace);
+  const sign = Math.sign(cross.dot(worldNormal)) || 1;
+
+  const worldAxisRotation = new THREE.Quaternion().setFromAxisAngle(worldNormal, angle * sign);
+  dice.quaternion.premultiply(worldAxisRotation);
+  dice.updateMatrixWorld(true);
 };
 
 // Знаходить грань, яка найбільше "дивиться вгору" у world-space.
@@ -244,9 +292,9 @@ const getFrontFace = () => {
 };
 
 // Оновлює трикутну підсвітку на грані, яка зараз дивиться в камеру.
-const updateTopFaceHighlight = () => {
+const updateTopFaceHighlight = (face = null) => {
   if (!dice || !topFaceHighlightGeometry || !topFaceHighlightMesh) return;
-  const frontFace = getFrontFace();
+  const frontFace = face ?? getFrontFace();
   if (!frontFace || !frontFace.vertices) return;
 
   const normalOffset = frontFace.normal.clone().multiplyScalar(0.014);
@@ -277,7 +325,12 @@ const prepareSettleForFace = (face) => {
 
   // Поворот, який переводить поточну нормаль грані в напрямок на камеру.
   const alignQuaternion = new THREE.Quaternion().setFromUnitVectors(currentFaceNormalWorld, desiredFaceNormalWorld);
-  settleTargetQuaternion.copy(alignQuaternion.multiply(dice.quaternion));
+  // Обмежуємо доводку, щоб уникнути різкого перескоку між далекими гранями.
+  const maxSettleAngle = 0.55; // ~31.5°
+  const fullAngle = 2 * Math.acos(THREE.MathUtils.clamp(alignQuaternion.w, -1, 1));
+  const t = fullAngle > 1e-6 ? Math.min(1, maxSettleAngle / fullAngle) : 1;
+  const limitedAlign = new THREE.Quaternion().identity().slerp(alignQuaternion, t);
+  settleTargetQuaternion.copy(limitedAlign.multiply(dice.quaternion));
 
   settlingFace = face;
   isSettlingToTargetFace = true;
@@ -341,6 +394,7 @@ const initScene = () => {
     depthWrite: false
   });
   topFaceHighlightMesh = new THREE.Mesh(topFaceHighlightGeometry, topFaceHighlightMaterial);
+  topFaceHighlightMesh.visible = false;
   dice.add(topFaceHighlightMesh);
 
   // Геометрія ребер для видимого контуру.
@@ -353,9 +407,21 @@ const initScene = () => {
   dice.add(line);
   // Додаємо номери граней на кістку.
   addFaceLabels();
-  // Перший стан підсвітки.
-  updateTopFaceHighlight();
-
+  // Стартова орієнтація: грань 20 дивиться на користувача.
+  const startFace = faceLabels.find((f) => f.value === 20);
+  if (startFace) {
+    const cameraForward = new THREE.Vector3();
+    camera.getWorldDirection(cameraForward);
+    const toUser = cameraForward.clone().negate().normalize();
+    const alignToStartFace = new THREE.Quaternion().setFromUnitVectors(
+      startFace.normal.clone().normalize(),
+      toUser
+    );
+    dice.quaternion.copy(alignToStartFace);
+    dice.updateMatrixWorld(true);
+    alignFaceTrianglePointUp(startFace);
+    orientFaceLabelUpright(startFace);
+  }
   // Додаємо кістку на сцену.
   scene.add(dice);
 };
@@ -367,6 +433,7 @@ const animate = () => {
 
   // Логіка обертання виконується тільки якщо кидок активний.
   if (isRolling.value) {
+    if (topFaceHighlightMesh) topFaceHighlightMesh.visible = false;
     // Обертання по осі X.
     dice.rotation.x += rotationSpeed.x;
     // Обертання по осі Y.
@@ -380,22 +447,29 @@ const animate = () => {
     // Коли швидкість мала — зупиняємо кидок.
     if (rotationSpeed.x < 0.005 && rotationSpeed.y < 0.005) {
       isRolling.value = false;
-      prepareSettleForFace(getTopFace());
+      prepareSettleForFace(getFrontFace());
     }
   }
   // Плавно доводимо куб до орієнтації, де targetFace дивиться на користувача.
   else if (isSettlingToTargetFace) {
-    dice.quaternion.slerp(settleTargetQuaternion, 0.14);
+    if (topFaceHighlightMesh) topFaceHighlightMesh.visible = false;
+    dice.quaternion.slerp(settleTargetQuaternion, 0.08);
     if (dice.quaternion.angleTo(settleTargetQuaternion) < 0.002) {
       dice.quaternion.copy(settleTargetQuaternion);
       isSettlingToTargetFace = false;
-      orientFaceLabelUpright(settlingFace);
+      const frontFace = getFrontFace();
+      alignFaceTrianglePointUp(frontFace);
+      updateTopFaceHighlight(frontFace);
+      if (topFaceHighlightMesh) topFaceHighlightMesh.visible = true;
+      orientFaceLabelUpright(frontFace);
       settlingFace = null;
     }
   }
-
-  // Підсвічуємо поточну верхню грань у кожному кадрі.
-  updateTopFaceHighlight();
+  else if (topFaceHighlightMesh && !topFaceHighlightMesh.visible) {
+    const frontFace = getFrontFace();
+    updateTopFaceHighlight(frontFace);
+    topFaceHighlightMesh.visible = true;
+  }
 
   // Рендеримо сцену в поточному кадрі.
   renderer.render(scene, camera);
@@ -406,6 +480,7 @@ const rollDice = () => {
   // Скасовуємо попередню фазу довертання (якщо була).
   isSettlingToTargetFace = false;
   settlingFace = null;
+  if (topFaceHighlightMesh) topFaceHighlightMesh.visible = false;
   // Увімкнути режим обертання.
   isRolling.value = true;
   // Встановити випадкову стартову швидкість по X.
